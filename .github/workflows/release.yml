@@ -1,0 +1,32 @@
+name: release
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+  packages: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+      - name: npm ci
+        run: npm ci
+      - name: npm run build
+        run: npm run build
+      - name: get version
+        id: get_version
+        run: echo "version=v$(jq -r '.version' package.json)" >> "$GITHUB_OUTPUT"
+      - name: npm publish
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
