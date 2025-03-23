@@ -1,10 +1,11 @@
 import { remote } from "@pulumi/command";
 import { remote as remote_inputs } from "@pulumi/command/types/input";
 import * as pulumi from "@pulumi/pulumi";
-import dedent from "dedent";
 import * as YAML from "yaml";
 
 import { directoryHash, stringHash } from "./asset-utils";
+
+export const defaultRemotePath = "/var/ansible";
 
 export const bashBackoffRetryFunction = `
 function with_backoff {
@@ -72,7 +73,9 @@ export interface RolesCopy {
   hash: pulumi.Output<string>;
 }
 
-export function buildPlaybookOutput(props: AnsibleProvisionerProps): pulumi.Output<any> {
+export function makePlaybookOutput(
+  props: Pick<AnsibleProvisionerProps, "roles" | "preTasks" | "postTasks" | "tasks" | "vars">,
+): pulumi.Output<any> {
   return pulumi.all({
     roles: props.roles,
     preTasks: props.preTasks,
@@ -116,16 +119,32 @@ export function buildFileWriteCommand(path: string, contents: string): string {
   }
 }
 
-export function buildRunCommand({ remotePath, id }: { remotePath: string; id: string }): string {
+export function buildRunCommand(inputs: {
+  remotePath: string;
+  id: string;
+  withBackoff?: boolean;
+  withBackoffDefinition?: string;
+}): string {
+  let { remotePath, id, withBackoff, withBackoffDefinition } = inputs;
+
+  if (withBackoff === undefined) {
+    withBackoff = true;
+  }
+
+  if (withBackoff && withBackoffDefinition === undefined) {
+    withBackoffDefinition = bashBackoffRetryFunction;
+  }
+
+  const with_backoff = withBackoff ? "with_backoff" : "";
+
   return [
-    "set -eu",
-    bashBackoffRetryFunction,
-    dedent(`
-      cd "${remotePath}"
-      [[ -s requirements.yml ]] && with_backoff ansible-galaxy install -r requirements.yml
-      with_backoff ansible-playbook -i localhost, '${id}.yml'
-    `),
-  ].join("\n");
+    "set -eu\n",
+    withBackoffDefinition ?? "",
+    "\n",
+    `cd "${remotePath}"\n`,
+    `[[ -s requirements.yml ]] && ${with_backoff} ansible-galaxy install -r requirements.yml\n`,
+    `${with_backoff} ansible-playbook -i localhost, '${id}.yml'\n`,
+  ].join("");
 }
 
 export function makeRolesCopies(inputs: {
@@ -261,11 +280,11 @@ export class AnsibleProvisioner extends pulumi.ComponentResource {
   constructor(id: string, props: AnsibleProvisionerProps, opts: pulumi.ComponentResourceOptions = {}) {
     super("sapslaj:pulumi-ansible-provisioner:AnsibleProvisioner", id, {}, opts);
 
-    const remotePath = props.remotePath ?? "/var/ansible";
+    const remotePath = props.remotePath ?? defaultRemotePath;
 
     const connection = props.connection;
 
-    const playbook = buildPlaybookOutput(props);
+    const playbook = makePlaybookOutput(props);
 
     const initCommands: pulumi.Input<string>[] = [
       pulumi.all({ remotePath }).apply(({ remotePath }) => buildRemotePathInitCommand({ remotePath })),
@@ -319,7 +338,9 @@ export class AnsibleProvisioner extends pulumi.ComponentResource {
     });
 
     this.runCommand = new remote.Command(`${id}-run`, {
-      create: pulumi.all({ remotePath }).apply(({ remotePath }) => buildRunCommand({ remotePath, id })),
+      create: pulumi.all({ remotePath }).apply(({ remotePath }) =>
+        buildRunCommand({ remotePath, id, withBackoff: true })
+      ),
       connection,
       triggers: this.triggers,
     }, {
