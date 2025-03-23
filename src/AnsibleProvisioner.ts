@@ -38,12 +38,18 @@ function with_backoff {
 }
 `;
 
+/**
+ * @public
+ */
 export interface AnsiblePlaybookRole {
   role: pulumi.Input<string>;
   vars?: pulumi.Input<Record<string, pulumi.Input<any>>>;
   [key: string]: pulumi.Input<any>;
 }
 
+/**
+ * @public
+ */
 export interface AnsibleProvisionerProps {
   connection: remote_inputs.ConnectionArgs;
   rolePaths?: string[];
@@ -242,6 +248,9 @@ export function makeTriggers(inputs: {
   });
 }
 
+/**
+ * @public
+ */
 export class AnsibleProvisioner extends pulumi.ComponentResource {
   playbookYaml: pulumi.Output<string>;
   initCommand: remote.Command;
