@@ -135,15 +135,15 @@ export function buildRunCommand(inputs: {
     withBackoffDefinition = bashBackoffRetryFunction;
   }
 
-  const with_backoff = withBackoff ? "with_backoff" : "";
+  const with_backoff = withBackoff ? "with_backoff " : "";
 
   return [
     "set -eu\n",
     withBackoffDefinition ?? "",
     "\n",
     `cd "${remotePath}"\n`,
-    `[[ -s requirements.yml ]] && ${with_backoff} ansible-galaxy install -r requirements.yml\n`,
-    `${with_backoff} ansible-playbook -i localhost, '${id}.yml'\n`,
+    `[[ -s requirements.yml ]] && ${with_backoff}ansible-galaxy install -r requirements.yml\n`,
+    `${with_backoff}ansible-playbook -i localhost, '${id}.yml'\n`,
   ].join("");
 }
 
@@ -189,9 +189,6 @@ export function makeTriggers(inputs: {
   initCommand: remote.Command;
   rolesCopies: RolesCopy[];
 }): pulumi.Output<any[]> {
-  // change this to force reprovision on next up
-  const serial = "serial:6e884a67-eec3-4ecc-bbc2-15f1122edf0f";
-
   const triggerParts: pulumi.Output<any[]>[] = [];
 
   if (inputs.inputTriggers) {
@@ -256,10 +253,6 @@ export function makeTriggers(inputs: {
 
   return pulumi.all(triggerParts).apply((parts) => {
     const triggers: any[] = [];
-    triggers.push(serial);
-    if (process.env.ANSIBLE_PROVISIONER_FORCE) {
-      triggers.push(new Date().toUTCString());
-    }
     parts.forEach((part) => {
       triggers.push(...part);
     });
