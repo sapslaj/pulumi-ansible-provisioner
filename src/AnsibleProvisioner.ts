@@ -3,7 +3,7 @@ import { remote as remote_inputs } from "@pulumi/command/types/input";
 import * as pulumi from "@pulumi/pulumi";
 import * as YAML from "yaml";
 
-import { directoryHash, stringHash } from "./asset-utils";
+import { concatCommands, directoryHash, gatherRolesFiles, stringHash } from "./asset-utils";
 
 export const defaultRemotePath = "/var/ansible";
 
@@ -54,6 +54,7 @@ export interface AnsiblePlaybookRole {
 export interface AnsibleProvisionerProps {
   connection: remote_inputs.ConnectionArgs;
   rolePaths?: string[];
+  clean?: boolean;
   ansibleInstallCommand?: pulumi.Input<string>;
   requirements?: pulumi.Input<any>;
   roles?: pulumi.Input<AnsiblePlaybookRole>[];
@@ -117,6 +118,22 @@ export function buildFileWriteCommand(path: string, contents: string): string {
       "EOF\n",
     ].join("\n");
   }
+}
+
+export function buildCleanCommand({ remotePath, fileList }: {
+  remotePath: string;
+  fileList: string[];
+}): string {
+  const arrayInner = fileList.map((v) => `"${remotePath}/${v}"`).join(" ");
+  return [
+    `keep_files=(${arrayInner})\n`,
+    `while IFS= read -r -d '' file; do\n`,
+    `  if [[ ! " \${keep_files[*]} " =~ " $file" ]]; then\n`,
+    `    echo "Deleting: $file"\n`,
+    `    rm "$file"\n`,
+    `  fi\n`,
+    `done < <(find "${remotePath}" -type f -print0)\n`,
+  ].join("");
 }
 
 export function buildRunCommand(inputs: {
@@ -282,10 +299,30 @@ export class AnsibleProvisioner extends pulumi.ComponentResource {
     const initCommands: pulumi.Input<string>[] = [
       pulumi.all({ remotePath }).apply(({ remotePath }) => buildRemotePathInitCommand({ remotePath })),
     ];
+
     if (props.ansibleInstallCommand) {
       initCommands.push(bashBackoffRetryFunction);
       initCommands.push(props.ansibleInstallCommand);
     }
+
+    if (props.clean !== false) {
+      initCommands.push(
+        pulumi.all({ remotePath }).apply(async ({ remotePath }) => {
+          const fileList: string[] = [
+            `${id}.yml`,
+          ];
+
+          if (props.requirements !== undefined) {
+            fileList.push("requirements.yml");
+          }
+
+          fileList.push(...Object.keys(await gatherRolesFiles(props.rolePaths ?? [])));
+
+          return buildCleanCommand({ remotePath, fileList });
+        }),
+      );
+    }
+
     if (props.requirements !== undefined) {
       const requirementsYaml = pulumi.output(props.requirements).apply((requirements) => YAML.stringify(requirements));
 
@@ -305,7 +342,7 @@ export class AnsibleProvisioner extends pulumi.ComponentResource {
     );
 
     this.initCommand = new remote.Command(`${id}-init`, {
-      create: pulumi.concat(...initCommands),
+      create: concatCommands(initCommands),
       connection,
     }, {
       parent: this,
